@@ -8,6 +8,7 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.FileSplit;
 import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
@@ -15,25 +16,31 @@ import org.apache.hadoop.mapred.RecordReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Iterator;
 
 /**
  */
-public class QuadTreeRecordReader
-        implements RecordReader<LongWritable, PointData>
+public class AISRecordReader
+        implements RecordReader<LongWritable, Text>
 {
     private Logger m_logger = LoggerFactory.getLogger(getClass());
     private Iterator<PointData> m_iterator;
     private FSDataInputStream m_indexStream;
+    private FSDataInputStream m_dataStream;
+    private ByteArrayOutputStream m_byteArrayOutputStream = new ByteArrayOutputStream();
     private boolean m_hasNext = true;
 
-    public QuadTreeRecordReader(
+    public AISRecordReader(
             final InputSplit inputSplit,
             final JobConf jobConf) throws IOException
     {
         if (inputSplit instanceof FileSplit)
         {
+            final String replaceIndex = jobConf.get(Const.PATH_INDEX, "/ais-index");
+            final String replaceData = jobConf.get(Const.PATH_DATA, "/ais");
+
             final FileSystem fileSystem = FileSystem.get(jobConf);
             final FileSplit fileSplit = (FileSplit) inputSplit;
             final Path indexPath = fileSplit.getPath();
@@ -44,10 +51,13 @@ public class QuadTreeRecordReader
             final double xmax = jobConf.getDouble(Const.XMAX, 180.0);
             final double ymax = jobConf.getDouble(Const.YMAX, 90.0);
 
-            m_logger.info(String.format("Extent = %.6f %.6f %.6f %.6f", xmin, ymin, xmax, ymax));
+            m_logger.info(String.format("0,%.6f,%.6f 1,%.6f,%.6f", xmin, ymin, xmax, ymax));
 
             final QuadTree quadTree = new QuadTree(m_indexStream);
             m_iterator = quadTree.search(m_indexStream, new Extent(xmin, ymin, xmax, ymax));
+
+            final Path dataPath = new Path(indexPath.toUri().getPath().replace(replaceIndex, replaceData));
+            m_dataStream = fileSystem.open(dataPath);
         }
         else
         {
@@ -62,9 +72,9 @@ public class QuadTreeRecordReader
     }
 
     @Override
-    public PointData createValue()
+    public Text createValue()
     {
-        return new PointData();
+        return new Text();
     }
 
     @Override
@@ -82,6 +92,11 @@ public class QuadTreeRecordReader
     @Override
     public void close() throws IOException
     {
+        if (m_dataStream != null)
+        {
+            m_dataStream.close();
+            m_dataStream = null;
+        }
         if (m_indexStream != null)
         {
             m_indexStream.close();
@@ -92,16 +107,28 @@ public class QuadTreeRecordReader
     @Override
     public boolean next(
             final LongWritable key,
-            final PointData value) throws IOException
+            final Text value) throws IOException
     {
         m_hasNext = m_iterator.hasNext();
         if (m_hasNext)
         {
             final PointData pointData = m_iterator.next();
             key.set(pointData.address);
-            value.x = pointData.x;
-            value.y = pointData.y;
-            value.address = pointData.address;
+            m_dataStream.seek(pointData.address);
+            m_byteArrayOutputStream.reset();
+            while (m_dataStream.available() > 0)
+            {
+                final int b = m_dataStream.read();
+                if (b == '\n')
+                {
+                    break;
+                }
+                else
+                {
+                    m_byteArrayOutputStream.write(b);
+                }
+            }
+            value.set(m_byteArrayOutputStream.toByteArray());
         }
         return m_hasNext;
     }

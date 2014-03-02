@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
     <property>
-        <name>com.esri.xmin</name>
-        <value>-80.256089</value>
+        <name>com.esri.xmin.meters</name>
+        <value>-8923295</value>
     </property>
     <property>
-        <name>com.esri.ymin</name>
-        <value>25.803921</value>
+        <name>com.esri.ymin.meters</name>
+        <value>2968574</value>
     </property>
     <property>
-        <name>com.esri.xmax</name>
-        <value>-80.256087</value>
+        <name>com.esri.xmax.meters</name>
+        <value>-8918699</value>
     </property>
     <property>
-        <name>com.esri.ymax</name>
-        <value>25.803923</value>
+        <name>com.esri.ymax.meters</name>
+        <value>2971413</value>
     </property>
 </configuration>

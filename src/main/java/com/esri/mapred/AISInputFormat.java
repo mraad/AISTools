@@ -14,7 +14,7 @@ import java.io.IOException;
 
 /**
  */
-public class QuadTreeFileInputFormat
+public class AISInputFormat
         extends FileInputFormat<LongWritable, Text>
 {
     @Override
@@ -31,6 +31,6 @@ public class QuadTreeFileInputFormat
             final JobConf jobConf,
             final Reporter reporter) throws IOException
     {
-        return new QuadTreeRecordReader(inputSplit, jobConf);
+        return new AISRecordReader(inputSplit, jobConf);
     }
 }

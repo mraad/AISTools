@@ -1,13 +1,15 @@
 package com.esri;
 
+import com.esri.density.DensityMapper;
+import com.esri.density.DensityReducer;
 import com.esri.hadoop.Extent;
 import com.esri.hadoop.quadtree.FSQuadTreeWriter;
 import com.esri.hadoop.quadtree.PointData;
-import com.esri.mapred.QuadTreeFileInputFormat;
-import com.esri.mapred.QuadTreeMapper;
+import com.esri.mapred.AISInputFormat;
+import com.esri.mapred.QuadTreeInputFormat;
+import com.esri.search.AISMapper;
+import com.esri.search.QuadTreeMapper;
 import com.esri.shp.ShpHeader;
-import com.esri.density.DensityMapper;
-import com.esri.density.DensityReducer;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
@@ -19,19 +21,18 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.FileInputFormat;
 import org.apache.hadoop.mapred.FileOutputFormat;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.TextInputFormat;
 import org.apache.hadoop.mapred.TextOutputFormat;
-import org.apache.hadoop.util.LineReader;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -54,11 +55,15 @@ public class Main extends Configured implements Tool
         {
             doIndex(args[1]);
         }
-        else if (args.length == 3 && "search".equalsIgnoreCase(args[0]))
+        else if (args.length == 3 && "search-index".equalsIgnoreCase(args[0]))
         {
-            doSearch(args);
+            doSearch(args, true);
         }
-        else if (args.length == 4 && "com/esri/density".equalsIgnoreCase(args[0]))
+        else if (args.length == 3 && "search-ais".equalsIgnoreCase(args[0]))
+        {
+            doSearch(args, false);
+        }
+        else if (args.length == 4 && "density".equalsIgnoreCase(args[0]))
         {
             doDensity(args, false);
         }
@@ -69,11 +74,52 @@ public class Main extends Configured implements Tool
         else
         {
             System.err.println("Usage:");
-            System.err.println("  hadoop jar [jarfile] index [input path] [output path]");
-            System.err.println("  hadoop jar [jarfile] search [input path] [output path]");
-            System.err.println("  hadoop jar [jarfile] density [shapefile] [input path] [output path]");
+            System.err.println("  hadoop jar <jarfile> index <data input path> <output path>");
+            System.err.println("  hadoop jar <jarfile> search-ais <index input path> <output path>");
+            System.err.println("  hadoop jar <jarfile> search-index <index input path> <output path>");
+            System.err.println("  hadoop jar <jarfile> density <shapefile> <data input path> <output path>");
+            System.err.println("  hadoop jar <jarfile> density-index <shapefile> <index input path> <output path>");
         }
         return 0;
+    }
+
+    private void doSearch(
+            final String[] args,
+            final boolean isIndexSearch) throws IOException
+    {
+        final JobConf jobConf = new JobConf(getConf(), Main.class);
+        jobConf.setJobName("Search AIS");
+
+        jobConf.setDouble(Const.XMIN, WebMercator.xToLongitude(jobConf.getDouble("com.esri.xmin.meters", -20000000.0)));
+        jobConf.setDouble(Const.YMIN, WebMercator.yToLatitude(jobConf.getDouble("com.esri.ymin.meters", -20000000.0)));
+        jobConf.setDouble(Const.XMAX, WebMercator.xToLongitude(jobConf.getDouble("com.esri.xmax.meters", 20000000.0)));
+        jobConf.setDouble(Const.YMAX, WebMercator.yToLatitude(jobConf.getDouble("com.esri.ymax.meters", 20000000.0)));
+
+        FileInputFormat.setInputPaths(jobConf, new Path(args[1]));
+
+        if (isIndexSearch)
+        {
+            jobConf.setInputFormat(QuadTreeInputFormat.class);
+            jobConf.setMapperClass(QuadTreeMapper.class);
+        }
+        else
+        {
+            jobConf.setInputFormat(AISInputFormat.class);
+            jobConf.setMapperClass(AISMapper.class);
+        }
+
+        jobConf.setMapOutputKeyClass(NullWritable.class);
+        jobConf.setMapOutputValueClass(Text.class);
+
+        jobConf.setNumReduceTasks(0);
+
+        jobConf.setOutputFormat(TextOutputFormat.class);
+
+        final Path outputDir = new Path(args[2]);
+        outputDir.getFileSystem(jobConf).delete(outputDir, true);
+        FileOutputFormat.setOutputPath(jobConf, outputDir);
+
+        JobClient.runJob(jobConf);
     }
 
     private void doDensity(
@@ -84,19 +130,19 @@ public class Main extends Configured implements Tool
 
         if (useIndex)
         {
-            jobConf.setJobName("DensityQuadTree");
-            jobConf.setInputFormat(QuadTreeFileInputFormat.class);
+            jobConf.setJobName("Density Index");
+            jobConf.setInputFormat(AISInputFormat.class);
         }
         else
         {
-            jobConf.setJobName("Density");
+            jobConf.setJobName("Density Data");
             jobConf.setInputFormat(TextInputFormat.class);
         }
 
         DistributedCache.createSymlink(jobConf);
         DistributedCache.addCacheFile(new URI(args[1] + "#shp"), jobConf);
 
-        setExtent(jobConf, args[1]);
+        setExtentFromShpHeader(jobConf, args[1]);
 
         FileInputFormat.setInputPaths(jobConf, new Path(args[2]));
 
@@ -117,7 +163,7 @@ public class Main extends Configured implements Tool
         JobClient.runJob(jobConf);
     }
 
-    private void setExtent(
+    private void setExtentFromShpHeader(
             final JobConf jobConf,
             final String pathName) throws IOException
     {
@@ -126,38 +172,15 @@ public class Main extends Configured implements Tool
         try
         {
             final ShpHeader shpHeader = new ShpHeader(dataInputStream);
-            jobConf.setDouble(Const.XMIN, shpHeader.xmin);
-            jobConf.setDouble(Const.YMIN, shpHeader.ymin);
-            jobConf.setDouble(Const.XMAX, shpHeader.xmax);
-            jobConf.setDouble(Const.YMAX, shpHeader.ymax);
+            jobConf.setDouble(Const.XMIN, WebMercator.xToLongitude(shpHeader.xmin));
+            jobConf.setDouble(Const.YMIN, WebMercator.yToLatitude(shpHeader.ymin));
+            jobConf.setDouble(Const.XMAX, WebMercator.xToLongitude(shpHeader.xmax));
+            jobConf.setDouble(Const.YMAX, WebMercator.yToLatitude(shpHeader.ymax));
         }
         finally
         {
             dataInputStream.close();
         }
-    }
-
-    private void doSearch(final String[] args) throws IOException
-    {
-        final JobConf jobConf = new JobConf(getConf(), Main.class);
-        jobConf.setJobName("Search");
-
-        jobConf.setMapperClass(QuadTreeMapper.class);
-
-        jobConf.setMapOutputKeyClass(NullWritable.class);
-        jobConf.setMapOutputValueClass(Writable.class);
-
-        jobConf.setNumReduceTasks(0);
-
-        jobConf.setInputFormat(QuadTreeFileInputFormat.class);
-        jobConf.setOutputFormat(TextOutputFormat.class);
-
-        FileInputFormat.setInputPaths(jobConf, new Path(args[1]));
-        final Path outputDir = new Path(args[2]);
-        outputDir.getFileSystem(jobConf).delete(outputDir, true);
-        FileOutputFormat.setOutputPath(jobConf, outputDir);
-
-        JobClient.runJob(jobConf);
     }
 
     private void doIndex(final String pathName) throws IOException
@@ -212,42 +235,48 @@ public class Main extends Configured implements Tool
         final char charSep = conf.get("com.esri.field.sep", "\t").charAt(0);
 
         final String replaceData = conf.get(Const.PATH_DATA, "/ais");
-        final String replaceIndex = conf.get(   Const.PATH_INDEX, "/ais-index");
+        final String replaceIndex = conf.get(Const.PATH_INDEX, "/ais-index");
 
         final String pathName = pathData.toUri().getPath();
         m_logger.info(pathName);
         final Path pathIndex = new Path(pathName.replace(replaceData, replaceIndex));
-final FSDataOutputStream dataOutputStream = fileSystem.create(pathIndex, true);
-final FSQuadTreeWriter quadTreeWriter = new FSQuadTreeWriter(dataOutputStream, bucketSize, extent);
-try
-{
-    final FSDataInputStream dataInputStream = fileSystem.open(pathData);
-    try
-    {
-        final FastTok fastTok = new FastTok();
-        final LineReader lineReader = new LineReader(dataInputStream);
-        final Text text = new Text();
-        long pos = 0;
-        int len = lineReader.readLine(text);
-        while (len > 0)
+        final FSDataOutputStream dataOutputStream = fileSystem.create(pathIndex, true);
+        final FSQuadTreeWriter quadTreeWriter = new FSQuadTreeWriter(dataOutputStream, bucketSize, extent);
+        try
         {
-            fastTok.tokenize(text.toString(), charSep);
-            final double x = Double.parseDouble(fastTok.tokens[indexX]);
-            final double y = Double.parseDouble(fastTok.tokens[indexY]);
-            quadTreeWriter.addPointData(new PointData(x, y, pos));
-            pos += len;
-            len = lineReader.readLine(text);
+            final FSDataInputStream dataInputStream = fileSystem.open(pathData);
+            try
+            {
+                final ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                final FastTok fastTok = new FastTok();
+                long pos = 0;
+                while (dataInputStream.available() > 0)
+                {
+                    final int b = dataInputStream.readByte();
+                    if (b == '\n')
+                    {
+                        fastTok.tokenize(byteArrayOutputStream.toString(), charSep);
+                        final double x = Double.parseDouble(fastTok.tokens[indexX]);
+                        final double y = Double.parseDouble(fastTok.tokens[indexY]);
+                        quadTreeWriter.addPointData(new PointData(x, y, pos));
+                        pos = dataInputStream.getPos();
+                        byteArrayOutputStream.reset();
+                    }
+                    else
+                    {
+                        byteArrayOutputStream.write(b);
+                    }
+                }
+            }
+            finally
+            {
+                dataInputStream.close();
+            }
         }
-    }
-    finally
-    {
-        dataInputStream.close();
-    }
-}
-finally
-{
-    quadTreeWriter.close();
-}
+        finally
+        {
+            quadTreeWriter.close();
+        }
     }
 
     public static void main(final String[] args) throws Exception

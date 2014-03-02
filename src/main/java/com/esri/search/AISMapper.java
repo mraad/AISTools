@@ -1,4 +1,4 @@
-package com.esri.mapred;
+package com.esri.search;
 
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.NullWritable;
@@ -12,7 +12,7 @@ import java.io.IOException;
 
 /**
  */
-public class QuadTreeMapper extends MapReduceBase
+public class AISMapper extends MapReduceBase
         implements Mapper<LongWritable, Text, NullWritable, Text>
 {
     @Override

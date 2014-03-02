@@ -12,6 +12,7 @@ public final class Const
     public static final int INDEX_ZULU = 7;
     public static final int INDEX_VOYAGE_ID = 9;
     public static final int INDEX_MMSI = 10;
+
     public static final String XMIN = "com.esri.xmin";
     public static final String YMIN = "com.esri.ymin";
     public static final String XMAX = "com.esri.xmax";

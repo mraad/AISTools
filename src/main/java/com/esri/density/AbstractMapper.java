@@ -31,6 +31,7 @@ public abstract class AbstractMapper<K, V>
     protected int m_indexLat;
     protected int m_indexZulu;
     protected int m_indexMMSI;
+    protected char m_fieldSep;
 
     protected IntWritable m_voyageId = new IntWritable();
     protected Broadcast m_broadcast = new Broadcast();
@@ -45,11 +46,12 @@ public abstract class AbstractMapper<K, V>
         m_indexZulu = job.getInt("com.esri.index.zulu", Const.INDEX_ZULU);
         m_indexVoyageId = job.getInt("com.esri.index.voyageid", Const.INDEX_VOYAGE_ID);
         m_indexMMSI = job.getInt("com.esri.index.mmsi", Const.INDEX_MMSI);
+        m_fieldSep = job.get("com.esri.field.separator", "\t").charAt(0);
     }
 
     protected void tokenize(final Text text) throws ParseException
     {
-        m_fastTok.tokenize(text.toString(), '\t');
+        m_fastTok.tokenize(text.toString(), m_fieldSep);
 
         final String[] tokens = m_fastTok.tokens;
 
@@ -57,13 +59,13 @@ public abstract class AbstractMapper<K, V>
         m_voyageId.set(voyageId);
 
         m_broadcast.voyageId = voyageId;
-        m_broadcast.zulu = getTime(tokens[m_indexZulu]);
+        m_broadcast.zulu = toZulu(tokens[m_indexZulu]);
         m_broadcast.mmsi = tokens[m_indexMMSI];
         m_broadcast.xMeters = WebMercator.longitudeToX(Double.parseDouble(tokens[m_indexLon]));
         m_broadcast.yMeters = WebMercator.latitudeToY(Double.parseDouble(tokens[m_indexLat]));
     }
 
-    protected long getTime(final String text) throws ParseException
+    protected long toZulu(final String text) throws ParseException
     {
         return m_simpleDateFormat.parse(text).getTime();
     }
