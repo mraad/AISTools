@@ -11,7 +11,7 @@ To take advantage of this dual data placement, and knowing how this AIS point da
 
 * [WebMercator](https://github.com/mraad/WebMercator)
 * [Shapefile](https://github.com/mraad/Shapefile)
-* [FSSpatialIndex](https://github.com/mraad/Shapefile)
+* [FSSpatialIndex](https://github.com/mraad/FSSpatialIndex)
 
 ### Build and Package
 ```
